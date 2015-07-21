@@ -44,7 +44,7 @@ logger <- new.logger(log.file)
 #Function for loading sequences
 read.fastq <- function(f) {
 	tryCatch({
-		con <- file(f, open="r")
+		con <- gzfile(f, open="r")
 		p <- new.fastq.parser(con)
 		out <- list()
 		while (length(s <- p$parse.next(1)) > 0) {
@@ -127,6 +127,35 @@ logger$info("Grouping by sample and counting...")
 out <- tapply(clone.ids, sample.ids, function(cids) {
 	table(cids,useNA="ifany")
 },simplify=FALSE)
+
+#Function for safely writing sequences
+write.fastq <- function(f,seqs,gz=TRUE) {
+	tryCatch({
+		con <- if (gz) gzfile(f,open="w") else file(f, open="w")
+		writeFASTQ(con,seqs)
+	},
+	error = function(ex) {
+		logger$fatal(paste("Error while writing file",f," :\n",ex))
+		stop(ex)
+	},
+	finally = {
+		if (exists("con") && isOpen(con)) {
+			close(con)
+		}
+	})
+}
+
+#Sort reads in to subdirectories according to samples
+invisible(tapply(1:length(r1.seq), sample.ids, function(idx) {
+	sample.id <- sample.ids[idx[[1]]]
+	sub.dir <- paste(dir.name,sample.id,"/",sep="")
+	if (!file.exists(sub.dir)) dir.create(sub.dir,showWarnings=FALSE)
+
+	r1.out.file <- paste(sub.dir,"R1_",job.id,".fastq.gz",sep="")
+	r2.out.file <- paste(sub.dir,"R2_",job.id,".fastq.gz",sep="")
+	write.fastq(r1.out.file,r1.seq[idx])
+	write.fastq(r2.out.file,r2.seq[idx])
+}))
 
 logger$info("Writing output...")
 

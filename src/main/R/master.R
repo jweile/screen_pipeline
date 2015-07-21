@@ -86,8 +86,8 @@ ks$build.index(paste(clone.db,".fa",sep=""))
 #
 make.chunk <- function(incon, out.dir, i, direction) {
 
-	outfile <- paste(out.dir,direction,"-",i,".fastq",sep="")
-	outcon <- file(outfile,open="w")
+	outfile <- paste(out.dir,direction,"-",i,".fastq.gz",sep="")
+	outcon <- gzfile(outfile,open="w")
 
 	lines <- readLines(incon, chunk.size*4)
 	writeLines(lines,outcon)
