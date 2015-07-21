@@ -227,7 +227,7 @@ invisible(lapply(result.dirs, function(result.dir) {
 
 	#Clean up slave output
 	if (!debug.mode) {
-		file.remove(list.files(dir.name,pattern="counts_.+\\.txt\\.gz"))
+		file.remove(list.files(result.dir,pattern="counts_.+\\.txt\\.gz"))
 	}
 
 }))
