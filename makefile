@@ -40,23 +40,23 @@ stable:
 #build a zip file with the final product
 _build: 
 	#create build directory
-	mkdir -p $PROJECT/lib/
-	# mkdir -p $PROJECT/html/
-	mkdir -p $PROJECT/res/
+	mkdir -p $(PROJECT)/lib/
+	# mkdir -p $(PROJECT)/html/
+	mkdir -p $(PROJECT)/res/
 	#copy code into dir structure
-	cp src/main/R/* $PROJECT/lib/
-	cp src/main/resources/* $PROJECT/res/
-	# cp src/main/html/* $PROJECT/html/
-	cp src/main/bash/* $PROJECT/
+	cp src/main/R/* $(PROJECT)/lib/
+	cp src/main/resources/* $(PROJECT)/res/
+	# cp src/main/html/* $(PROJECT)/html/
+	cp src/main/bash/* $(PROJECT)/
 	#interpolate binary locations
-	src/make/interpolate.sh bins.cfg $PROJECT/
+	src/make/interpolate.sh bins.cfg $(PROJECT)/
 	#setup permissions
-	chmod u+x $PROJECT/lib/*.R
-	chmod u+x $PROJECT/*.sh
+	chmod u+x $(PROJECT)/lib/*.R
+	chmod u+x $(PROJECT)/*.sh
 	#zip build
-	zip $PROJECT_$(NOW).zip -r $PROJECT/ 
+	zip $(PROJECT)_$(NOW).zip -r $(PROJECT)/ 
 	#delete build directory
-	rm -r $PROJECT/
+	rm -r $(PROJECT)/
 
 build_latest: latest _build
 
@@ -66,8 +66,8 @@ build_stable: stable _build
 install: 
 	$(eval R=`grep Rscript bins.cfg|cut -d, -f2`)
 	$(R) src/make/install_dependencies.R
-	unzip $PROJECT_$(NOW).zip -d $${HOME}
+	unzip $(PROJECT)_$(NOW).zip -d $${HOME}
 	# mkdir -p $${HOME}/www/html/
-	# if ! [ -h $${HOME}/www/html/$PROJECT ]; then \
-	# 	ln -s $${HOME}/$PROJECT/ $${HOME}/www/html/;\
+	# if ! [ -h $${HOME}/www/html/$(PROJECT) ]; then \
+	# 	ln -s $${HOME}/$(PROJECT)/ $${HOME}/www/html/;\
 	# fi
