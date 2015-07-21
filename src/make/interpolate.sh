@@ -50,5 +50,5 @@ function interpolate {
 # interpolate "$buildDir/lib/analyze2.R"
 interpolate "$buildDir/lib/master.R"
 interpolate "$buildDir/lib/demuxer.R"
-interpolate "$buildDir/lib/consolidateAndAlign.R"
+# interpolate "$buildDir/lib/consolidateAndAlign.R"
 interpolate "$buildDir/lib/libyogiseq.R"
