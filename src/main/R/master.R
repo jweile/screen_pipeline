@@ -187,7 +187,7 @@ logger$info("Consolidating results...")
 
 read.stream <- function(result.dir) {
 	data <- list()
-	con <- gzcon(pipe(paste("cat ",result.dir,"*.txt.gz",sep=""),open="rb"))
+	con <- pipe(paste("zcat ",result.dir,"*.txt.gz",sep=""),open="rb")
 	while(length(line <- readLines(con,1)) > 0) {
 		if (substr(line,1,1)=="#") {
 			sample.id <- substr(line,2,nchar(line))
