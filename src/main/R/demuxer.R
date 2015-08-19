@@ -79,7 +79,7 @@ if (!all(seqnames(r2.seq)==seqnames(r1.seq))) {
 #####
 # STEP 1: identify muxtags
 #####
-logger$info("Identifying mulitplexing tags...")
+logger$info("Identifying multiplexing tags...")
 
 #Get muxtag combos from sample table
 sample.table <- read.delim(paste(muxtag.db,"_samples.tsv",sep=""),stringsAsFactors=FALSE)
@@ -90,8 +90,8 @@ ks <- new.kmer.search()
 kmer.file <- paste(muxtag.db,"_index.rdata",sep="")
 ks$load.index(kmer.file)
 #Trunkate sequence information around the muxtag position plusminus 2bp before k-mer search
-r1.mux.ids <- ks$search(substr(sapply(r1.seq,function(x)x$toString()),3,17))
-r2.mux.ids <- ks$search(substr(sapply(r2.seq,function(x)x$toString()),3,17))
+r1.mux.ids <- ks$search(substr(sapply(r1.seq,function(x)x$toString()),4,16),useAlignment=FALSE)
+r2.mux.ids <- ks$search(substr(sapply(r2.seq,function(x)x$toString()),4,16),useAlignment=FALSE)
 r12.mux.combos <- paste(r1.mux.ids,r2.mux.ids,sep="-")
 
 logger$info("Calling samples...")
@@ -116,8 +116,9 @@ logger$info("Identifying barcodes and clones...")
 
 ks <- new.kmer.search()
 ks$load.index(paste(clone.db,"_index.rdata",sep=""))
-clone.ids <- ks$search(substr(sapply(r1.seq,function(x)x$toString()),32,61))
-
+#Trunkate sequence information around the bc position plusminus 2bp before k-mer search
+# clone.ids <- ks$search(substr(sapply(r2.seq,function(x)x$toString()),32,60),max.d=7)
+clone.ids <- ks$search(substr(sapply(r2.seq,function(x)x$toString()),32,60),useAlignment=FALSE,min.hits=8)
 
 #####
 # STEP 3: GROUP ACCORDING TO SAMPLES AND COUNT

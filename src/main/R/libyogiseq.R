@@ -463,10 +463,12 @@ new.kmer.search <- function(k=5) {
 		}
 	}
 
-	#Fields storing the index (a hash mapping kmers to )
+	#Fields storing the index (a hash mapping kmers to template indices)
 	.kmer.index <- NULL
-	#
+	#Template names 
 	.kmer.index.names <- NULL
+	#Template sequences
+	.template.seqs <- NULL
 
 	build.index <- function(fasta.file) {
 		tryCatch({
@@ -495,34 +497,65 @@ new.kmer.search <- function(k=5) {
 		}
 
 		index.file <- sub(".fa","_index.rdata",fasta.file)
-		save(kmer.index,kmer.index.names,file=index.file)
+		save(kmer.index,kmer.index.names,seqs,file=index.file)
 
 		.kmer.index <<- kmer.index
 		.kmer.index.names <<- kmer.index.names
+		.template.seqs <<- seqs
 	}
 
 	load.index <- function(index.file) {
 		load(index.file)
 		.kmer.index <<- kmer.index
 		.kmer.index.names <<- kmer.index.names
+		.template.seqs <<- seqs
 	}
 
-	search <- function(queries,min.hits=3) {
+	search <- function(queries,min.hits=3,max.d=3,useAlignment=TRUE) {
 		sapply(queries, function(s) {
+
+			if (is.null(s) || is.na(s) || length(s) == 0 || nchar(s) == 0) {
+				return(NA)
+			}
 			# cat(s$getID(),"\n")
 			kms <- kmers(s)
+			#Filter out kmers that don't occur in library
 			kms <- kms[kms %in% keys(.kmer.index)]
+			#No result if no kmers occur in library
 			if (length(kms)==0) {
 				return(NA)
 			} 
+			#table showing number of hits per template id
 			nhits <- table(do.call(c,values(.kmer.index,kms,simplify=FALSE)))
-			top.nhits <- nhits[nhits >= min.hits & nhits==max(nhits)]
-			if (length(top.nhits) == 1) {
-				.kmer.index.names[[as.integer(names(top.nhits))]]
+			#filter out best match(es) if it fulfills minimum #hits requirement
+			if (useAlignment) {
+
+				#top 3 matches
+				top.nhits <- head(sort(nhits[nhits >= min.hits],decreasing=TRUE),3)
+				idxs <- as.integer(names(top.nhits))
+				#perform alignments for top 3 matches and report distance
+				d <- sapply(idxs,function(idx) {
+					tseq <- .template.seqs[[idx]]
+					new.alignment(tseq,s)$getDistance()
+				})
+				top.match <- idxs[which(d <= max.d & d==min(d))]
+				if (length(top.match) == 1) {
+					.kmer.index.names[[top.match]]
+				} else  {
+					NA
+				}
+		
 			} else {
-				#in case nothing gets over minimum or there are multiple choices
-				NA
+
+				top.nhits <- nhits[nhits >= min.hits & nhits==max(nhits)]
+				if (length(top.nhits) == 1) {
+					.kmer.index.names[[as.integer(names(top.nhits))]]
+				} else {
+					#in case nothing gets over minimum or there are multiple choices
+					NA
+				}
 			}
+		
 		})
 	}
 
@@ -532,7 +565,6 @@ new.kmer.search <- function(k=5) {
 		search=search
 	)
 }
-
 
 # call.variants <- function(sam.file, ref.file) {
 # 	pileup.file <- sub(".sam$",".pileup",sam.file)
