@@ -57,18 +57,29 @@ rownames(data.mat) <- clones
 
 write.table(data.mat,"raw_counts.csv",sep=",")
 
-# data.mat <- read.csv("raw_counts.csv")
-# colnames(data.mat) <- c(as.character(1:72),"invalid","undetermined")
-
-# primary <- which(substr(clones,1,1)=="U")
-# secondary <- which(substr(clones,1,1)=="s")
-# data.mat2 <- data.mat[primary,-c(19,20)]
 data.mat2 <- data.mat[-1,1:(ncol(data.mat)-2)]
 
-# data.mat2 <- data.mat[-1,-c(19,20)]
 data.rel <- apply(data.mat2,2,function(x)x/sum(x))
 
-# data.rel <- read.csv("data_rel")
+
+quantile_normalisation <- function(df){
+  df_rank <- apply(df,2,rank,ties.method="min")
+  df_sorted <- data.frame(apply(df, 2, sort))
+  df_mean <- apply(df_sorted, 1, mean)
+   
+  index_to_mean <- function(my_index, my_mean){
+    return(my_mean[my_index])
+  }
+   
+  df_final <- apply(df_rank, 2, index_to_mean, my_mean=df_mean)
+  rownames(df_final) <- rownames(df)
+  return(df_final)
+}
+#apply quantile normalization to replicate groups
+invisible(lapply(with(sample.table,tapply(sample,paste(interactor,condition,sep="_"),c)), function(is) {
+	data.rel[,is] <<- quantile_normalisation(data.rel[,is])
+}))
+
 
 #BOXPLOT
 ord <- with(sample.table,order(interactor,condition,replicate))
@@ -76,3 +87,45 @@ plotcols <- do.call(c,(lapply(do.call(c,lapply(c("firebrick","darkolivegreen","s
 boxplot(data.rel[,ord],ylim=c(0,.0003),col=plotcols,ylab="rel.freq.")
 mtext(unique(sample.table$interactor[ord]),side=1,line=3,at=0:7*9+4.5)
 mtext(c("-HIS","+HIS","+3AT"),side=1,line=2,at=seq(2,71,3))
+
+
+#Load clones
+clone.table <- read.csv("res/clones_y2h.csv",stringsAsFactors=FALSE)
+clone.idx <- hash(clone.table$id,1:nrow(clone.table))
+muts <- strsplit(clone.table$aa.calls,",")
+
+
+delpos <- do.call(rbind,lapply(strsplit(clone.table$deletions,"-"),function(x) if (length(x)==1&&is.na(x)) c(NA,NA) else as.numeric(x)))
+foo <- delpos[,1] < 82 & delpos[,2] > 545
+foo[is.na(foo)] <- FALSE
+null.clones <- clone.table$id[foo]
+foo <- delpos[,1] < delpos[,2]
+foo[is.na(foo)] <- FALSE
+longdel.clones <- clone.table$id[foo]
+
+permissive.cols <- with(sample.table,sample[interactor=="ZBED1" & condition=="+HIS"])
+selective.cols <- with(sample.table,sample[interactor=="ZBED1" & condition=="-HIS"])
+well.measured <- apply(data.mat2[,permissive.cols],1,median) > 10
+
+logfc <- log(apply(data.rel[,selective.cols],1,mean) / apply(data.rel[,permissive.cols],1,mean))
+# hist(logfc,breaks=50,col="darkolivegreen3",border="gray40")
+
+all.data <- data.frame(
+	row.names=rownames(data.rel),
+	mut=clone.table[values(clone.idx,rownames(data.rel)),"aa.calls"],
+	lfc=logfc,
+	well.measured=well.measured,
+	stringsAsFactors=FALSE
+)
+all.data[longdel.clones,"mut"] <- "longdel"
+all.data[null.clones,"mut"] <- "null"
+all.data$single <- regexpr("null|longdel|,",all.data$mut) < 0
+
+
+sac.data <- all.data[all.data$mut != "longdel" & all.data$well.measured,]
+lfcs <- do.call(rbind,tapply(sac.data$lfc,sac.data$mut,function(x) {
+	if (length(x) > 1) t(combn(x,2)) else NULL
+},simplify=FALSE))
+
+plot(lfcs,xlim=c(-5,5),ylim=c(-5,5),pch=".",main="all well measured clones",col="steelblue3")
+text(0,4,paste("R =",signif(cor(lfcs)[1,2],3)))

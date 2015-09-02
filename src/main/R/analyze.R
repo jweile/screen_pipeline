@@ -161,6 +161,8 @@ apply(combn(1:3,2),2,function(rep.is) {
 })
 par(op)
 
+# well.measured <- apply(c25,1,sd) < 0.000025 & apply(c37,1,sd) < 0.000025
+
 logfc <- log(apply(c37,1,mean)) - log(apply(c25,1,mean))
 p.values <- sapply(1:nrow(c37),function(i) {
 	tryCatch (
@@ -275,6 +277,7 @@ all.data <- as.df(lapply(1:nrow(data.rel), function(i) {
 		lfc = logfc[[i]],
 		single = !null & !longdel & regexpr(",",clone.table$aa.calls[[cid]]) < 0,
 		signif = id %in% hitnames
+		# well.measured = well.measured[[i]]
 	)
 }))
 rownames(all.data) <- all.data$id
@@ -345,19 +348,22 @@ polyphen <- with(pp.in,data.frame(row.names=paste(V8,V7,V9,sep=""),pp=V12))
 single.data$pp <- polyphen[single.data$mut,"pp"]
 
 single.data <- single.data[order(single.data$pp,single.data$lfc),]
-plot(single.data$pp,single.data$lfc,xlab="Polyphen",ylab="log(fc)")
+# plot(single.data$pp,single.data$lfc,xlab="Polyphen",ylab="log(fc)")
+pp.classes <- factor(sapply(single.data$pp,
+	function(p) if (p < .1) "pp < 0.1" else if (p > .9) "pp > 0.9" else "0.1 < pp < 0.9"
+),levels=c("pp < 0.1","0.1 < pp < 0.9","pp > 0.9"))
+boxplot(tapply(single.data$lfc,pp.classes,c),ylab="log(fold-change)")
 
 
 
-
-#Are non-significant hits enriched for low barcode counts in permissive condition?
-perm.barcount <- data.mat2[,with(sample.table,plasmid=="none",temp=25)]
-sig.perm.bc <- apply(perm.barcount[hits,],1,median)
-nonsig.perm.bc <- apply(perm.barcount[-hits,],1,median)
-op <- par(mfrow=c(2,1))
-hist(sig.perm.bc,breaks=0:40000,xlim=c(0,200),ylim=c(0,300),)
-hist(nonsig.perm.bc,breaks=0:40000,xlim=c(0,200),ylim=c(0,300))
-par(op)
+# #Are non-significant hits enriched for low barcode counts in permissive condition?
+# perm.barcount <- data.mat2[,with(sample.table,plasmid=="none",temp=25)]
+# sig.perm.bc <- apply(perm.barcount[hits,],1,median)
+# nonsig.perm.bc <- apply(perm.barcount[-hits,],1,median)
+# op <- par(mfrow=c(2,1))
+# hist(sig.perm.bc,breaks=0:40000,xlim=c(0,200),ylim=c(0,300),)
+# hist(nonsig.perm.bc,breaks=0:40000,xlim=c(0,200),ylim=c(0,300))
+# par(op)
 
 
 #Correlation between clones with same mutations
@@ -384,12 +390,13 @@ plot(lfcs,xlim=c(-5,5),ylim=c(-5,5),pch=20,main="all signif. clones",col="steelb
 # }))
 text(0,4,paste("R =",signif(cor(lfcs)[1,2],3)))
 
+#standard deviations of biological replicate sets
 biorep.sd <- do.call(c,tapply(sac.data$lfc,sac.data$mut,function(x) { 
 	if (length(x) > 1) sd(x) else NULL
 },simplify=FALSE))
 
 
-wt.ish.clones <- with(single.data,id[pp < 0.5 & min.blosum > 2 & signif & lfc > 0])
+wt.ish.clones <- with(single.data,id[pp < 0.1 & min.blosum > 2 & lfc > 0])
 
 null.lfc <- all.data[null.clones,"lfc"]
 wt.lfc <- all.data[wt.ish.clones,"lfc"]
@@ -431,7 +438,8 @@ abline(v=null.lfc,col="firebrick3",lty="dashed")
 par(op)
 dev.off()
 
-
+.lfc <- all.data$lfc
+.lfc[!all.data$signif] <- 0
 
 #Correlations between single-mut cones with same mutations
 # single.muts <- unique(clone.table$aa.calls[sapply(muts,length)==1])
