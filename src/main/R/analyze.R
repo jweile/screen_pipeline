@@ -1,4 +1,5 @@
 library("hash")
+options(stringsAsFactors=FALSE)
 
 read.stream <- function(result.dir) {
 	data <- list()
@@ -54,7 +55,7 @@ data.mat <- do.call(cbind,lapply(data,function(counts) {
 colnames(data.mat) <- names(data)
 rownames(data.mat) <- clones
 
-write.table(data.mat,"raw_counts.csv",sep=",")
+write.table(data.mat,"raw_counts_comp.csv",sep=",")
 
 # data.mat <- read.csv("raw_counts.csv")
 # colnames(data.mat) <- c(as.character(1:18),"invalid","undetermined")
@@ -141,6 +142,10 @@ data.rel <- data.rel[-missing,]
 
 c25 <- data.rel[,with(sample.table,which(plasmid=="none" & temp==25))]
 c37 <- data.rel[,with(sample.table,which(plasmid=="none" & temp==37))]
+
+#Standard-deviation of technical replicates determines well-measuredness
+well.measured <- apply(c25,1,sd) < 0.000025
+
 lfc.rep <- log(c37) - log(c25)
 lfc.rep.fin <- do.call(rbind,lapply(1:nrow(lfc.rep), function(i) {
 	if (!any(is.na(lfc.rep[i,])) && all(is.finite(lfc.rep[i,]))) lfc.rep[i,] else NULL
@@ -161,7 +166,6 @@ apply(combn(1:3,2),2,function(rep.is) {
 })
 par(op)
 
-# well.measured <- apply(c25,1,sd) < 0.000025 & apply(c37,1,sd) < 0.000025
 
 logfc <- log(apply(c37,1,mean)) - log(apply(c25,1,mean))
 p.values <- sapply(1:nrow(c37),function(i) {
@@ -276,11 +280,28 @@ all.data <- as.df(lapply(1:nrow(data.rel), function(i) {
 		mut = if (null) "null" else if (longdel) "longdel" else clone.table$aa.calls[[cid]],
 		lfc = logfc[[i]],
 		single = !null & !longdel & regexpr(",",clone.table$aa.calls[[cid]]) < 0,
-		signif = id %in% hitnames
-		# well.measured = well.measured[[i]]
+		signif = id %in% hitnames,
+		well.measured = well.measured[[i]]
 	)
 }))
 rownames(all.data) <- all.data$id
+
+big.insig <- rownames(all.data)[abs(all.data$lfc) > .5 & !all.data$signif]
+sd25 <- apply(c25,1,sd)
+sd37 <- apply(c37,1,sd)
+op <- par(mfrow=c(4,1))
+hist(log(sd25[big.insig]),breaks=seq(-20,0,.5))
+hist(log(sd25[hitnames]),breaks=seq(-20,0,.5))
+hist(log(sd37[big.insig]),breaks=seq(-20,0,.5))
+hist(log(sd37[hitnames]),breaks=seq(-20,0,.5))
+par(op)
+
+sp <- sqrt(apply(c25,1,var)/3 + apply(c37,1,var)/3)
+op <- par(mfrow=c(2,1))
+hist(log(sp[big.insig]),breaks=seq(-20,0,.5))
+hist(log(sp[hitnames]),breaks=seq(-20,0,.5))
+par(op)
+
 # all.data[null.clones,"mut"] <- "null"
 # all.data[longdel.clones,"mut"] <- "longdel"
 
@@ -367,7 +388,7 @@ boxplot(tapply(single.data$lfc,pp.classes,c),ylab="log(fold-change)")
 
 
 #Correlation between clones with same mutations
-sac.data <- all.data[all.data$mut != "longdel" & all.data$signif,]
+sac.data <- all.data[all.data$mut != "longdel" & all.data$well.measured,]
 lfcs <- do.call(rbind,tapply(sac.data$lfc,sac.data$mut,function(x) {
 	if (length(x) > 1) t(combn(x,2)) else NULL
 },simplify=FALSE))
@@ -384,7 +405,10 @@ lfcs <- do.call(rbind,tapply(sac.data$lfc,sac.data$mut,function(x) {
 # 	t(combn(lfc,2))
 # }))
 # colnames(lfcs) <- c("log(fc) A","log(fc) B")
-plot(lfcs,xlim=c(-5,5),ylim=c(-5,5),pch=20,main="all signif. clones",col="steelblue3")
+plot(lfcs,xlim=c(-5,5),ylim=c(-5,5),pch=20,
+	main="all signif. clones",col="steelblue3",
+	xlab="log(fc) rep 1",ylab="log(fc) rep 2"
+)
 # .lfcs <- do.call(rbind,lapply(1:nrow(lfcs), function(i) {
 # 	if (any(is.na(lfcs[i,])) || !all(is.finite(lfcs[i,]))) NULL else lfcs[i,]
 # }))
@@ -467,34 +491,115 @@ dev.off()
 # }))
 # text(0,4,paste("R =",signif(cor(.lfcs)[1,2],3)))
 
-single.muts <- unique(do.call(c,muts[sapply(muts,length)==1]))
-
-#Are the effects of mutations multiplicative?
-hit.muts <- strsplit(hit.data$mut,",")
-hit.singles <- which(sapply(hit.muts,length)==1)
-hit.single.idx <- hash()
-for (i in 1:length(hit.singles)) {
-	idx <- hit.singles[[i]]
-	m <- hit.muts[[idx]]
-	hit.single.idx[[m]] <- c(hit.single.idx[[m]],idx)
+#Generate an index of single mutant rows
+muts <- strsplit(all.data$mut,",")
+single.idx <- hash()
+for (i in 1:nrow(all.data)) {
+	if (all.data$single[[i]] && all.data$well.measured[[i]]) {
+		single.idx[[muts[[i]]]] <- c(single.idx[[muts[[i]]]],i)
+	}
 }
-realVsPred <- na.omit(do.call(rbind,lapply(1:nrow(hit.data),function(i) {
-	ms <- hit.muts[[i]]
-	if (length(ms) == 2) {
-		lfc <- hit.data[i,"lfc"]
+
+#sum of single LFC (product of FC)
+doubleVsingles <- do.call(rbind,lapply(1:nrow(all.data), function(i) {
+	ms <- muts[[i]]
+	if (length(ms)==2 && all.data$well.measured[[i]]) {
+		lfc <- all.data[i,"lfc"]
 		pred <- sum(sapply(ms, function(m) {
-			idxs <- hit.single.idx[[m]]
+			idxs <- single.idx[[m]]
 			if (is.null(idxs)) return(NA)
-			mean(hit.data[idxs,"lfc"])
+			mean(all.data[idxs,"lfc"])
 		}))
-		c(real=lfc,predicted=pred)
-	} else return(NULL)
+		if (!is.na(pred)) {
+			c(real=lfc,predicted=pred)
+		} else NULL
+	} else NULL
+}))
+plot(doubleVsingles,xlim=c(-4,4),ylim=c(-4,4),col="steelblue3",pch=20)
+abline(h=0,v=0,lty="dashed",col="gray")
+text(0,4,paste("R =",signif(cor(doubleVsingles)[1,2],3)))
+
+
+#Predict singles from doubles
+to.df <- function(x) {
+	out <- do.call(data.frame,lapply(1:ncol(x),function(i)unlist(x[,i])))
+	colnames(out) <- colnames(x)
+	out
+}
+plfcs <- to.df(do.call(rbind,lapply(1:nrow(all.data), function(i) {
+	ms <- muts[[i]]
+	if (length(ms)==2 && all.data$well.measured[[i]]) {
+		dlfc <- all.data[i,"lfc"]
+		do.call(rbind,lapply(ms, function(m) {
+			other.m <- setdiff(ms,m)
+			idxs <- single.idx[[m]]
+			if (is.null(idxs)) return(NULL)
+			slfc <- mean(all.data[idxs,"lfc"])
+			list(mut=other.m,plfc=dlfc-slfc)
+		}))
+	} else NULL
 })))
-plot(realVsPred,xlim=c(-3,5),ylim=c(-3,5),pch=20,col="firebrick3")
-cor(realVsPred[-1,])
+plfcs <- tapply(plfcs$plfc,plfcs$mut,mean)
+
+singleVsPred <- na.omit(do.call(rbind,lapply(keys(single.idx),function(sm) {
+	c(
+		real=mean(all.data[single.idx[[sm]],"lfc"]),
+		pred=if(sm %in% names(plfcs)) plfcs[[sm]] else NA
+	)
+})))
+plot(singleVsPred,xlim=c(-4,4),ylim=c(-4,4),col="steelblue3",pch=20)
+abline(h=0,v=0,lty="dashed",col="gray")
+text(0,4,paste("R =",signif(cor(singleVsPred)[1,2],3)))
 
 
-#double versus singles
+#make row index over mutations occurring anywhere in a clone
+anymut.idx <- hash()
+for (i in 1:length(muts)) {
+	ms <- muts[[i]]
+	for (m in ms) {
+		anymut.idx[[m]] <- c(anymut.idx[[m]],i)
+	}
+}
+#predict singles from averages
+plfcs2 <- sapply(keys(anymut.idx), function(m) {
+	is <- anymut.idx[[m]]
+	if (length(is) >=3 ) mean(all.data[is,"lfc"]) else NA
+})
+singleVsPred2 <- do.call(rbind,lapply(keys(single.idx), function(sm) {
+	# idxs <- which(sapply(muts,function(ms)sm%in%ms) & !all.data$single)
+	idxs <- anymut.idx[[sm]]
+	idxs <- idxs[!all.data$single[idxs]]
+	if (length(idxs)==0) return(NULL)
+	c(
+		real=mean(all.data[single.idx[[sm]],"lfc"]),
+		pred=mean(all.data[idxs,"lfc"])
+	)
+}))
+plot(singleVsPred2,xlim=c(-4,4),ylim=c(-4,4),col="steelblue3",pch=20)
+abline(h=0,v=0,lty="dashed",col="gray")
+text(0,4,paste("R =",signif(cor(singleVsPred2)[1,2],3)))
+
+table(sapply(keys(anymut.idx),function(key)length(anymut.idx[[key]])))
+
+all.combos <- function(x) {
+	if (length(x) == 0) {
+		return(list(NULL))
+	}
+	if (length(x) == 1) {
+		return(list(x))
+	}
+	do.call(c,lapply(1:length(x), function(n) {
+		do.call(c,apply(combn(length(x),n),2,function(is) {
+			a <- x[is]
+			b <- x[-is]
+			lapply(all.combos(b),function(cs)c(list(a),cs))
+		}))
+	}))
+}
+
+
+
+#Plot all doubles versus singles
 dvs <- na.omit(do.call(rbind,lapply(1:nrow(hit.data),function(i) {
 	ms <- hit.muts[[i]]
 	if (length(ms) == 2) {
@@ -519,45 +624,63 @@ abline(h=0,col="gray")
 legend("topleft",c("double mutant","lower single","higher single"),fill=c("firebrick3","royalblue3","darkolivegreen3"))
 
 
-mut.idx <- hash()
-for (i in 1:length(hit.muts)) {
-	if (length(hit.muts[[i]]) > 1) {
-		for (m in hit.muts[[i]]) {
-			mut.idx[[m]] <- c(mut.idx[[m]],i)
-		}
-	}
-}
-sva <- do.call(rbind,lapply(keys(hit.single.idx),function(sm) {
-	sng <- mean(hit.data[hit.single.idx[[sm]],"lfc"])
-	avg <- mean(hit.data[mut.idx[[sm]],"lfc"])
-	c(single=sng,average=avg)
-}))
-plot(sva,xlim=c(-3,5),ylim=c(-3,5),pch=20,col="firebrick3")
+
+# mut.idx <- hash()
+# for (i in 1:length(hit.muts)) {
+# 	if (length(hit.muts[[i]]) > 1) {
+# 		for (m in hit.muts[[i]]) {
+# 			mut.idx[[m]] <- c(mut.idx[[m]],i)
+# 		}
+# 	}
+# }
+# sva <- do.call(rbind,lapply(keys(hit.single.idx),function(sm) {
+# 	sng <- mean(hit.data[hit.single.idx[[sm]],"lfc"])
+# 	avg <- mean(hit.data[mut.idx[[sm]],"lfc"])
+# 	c(single=sng,average=avg)
+# }))
+# plot(sva,xlim=c(-3,5),ylim=c(-3,5),pch=20,col="firebrick3")
 
 
 ube2i.prot <- scan("res/ube2i_aa.fa",what="character")[[2]]
 wt.aa <- c(sapply(1:nchar(ube2i.prot),function(i)substr(ube2i.prot,i,i)),"*")
-insig.singles <- setdiff(single.muts,keys(hit.single.idx))
+# insig.singles <- setdiff(single.muts,keys(hit.single.idx))
 
 
 
 aas <- c("A","V","L","I","M","F","Y","W","R","H","K","D","E","S","T","N","Q","G","C","P")
 hmap <- matrix(NA,nrow=length(aas),ncol=160,dimnames=list(aas,1:160))
-#Fill in significant single mutants and wt
-for (m in keys(hit.single.idx)) {
+#Fill in predictions
+for (i in 1:length(plfcs2)) {
+	m <- names(plfcs2)[[i]]
+	if (m %in% c("longdel","null")) next
+	lfc <- plfcs2[[i]]
+	to.aa <- substr(m,nchar(m),nchar(m))
+	pos <- as.integer(substr(m,2,nchar(m)-1))
+	hmap[to.aa,pos] <- lfc
+}
+#Override product-rule predictions
+for (i in 1:length(plfcs)) {
+	m <- names(plfcs)[[i]]
+	lfc <- plfcs[[i]]
+	to.aa <- substr(m,nchar(m),nchar(m))
+	pos <- as.integer(substr(m,2,nchar(m)-1))
+	hmap[to.aa,pos] <- lfc
+}
+#Override in single mutants and wt
+for (m in keys(single.idx)) {
 	# from.aa <- substr(m,1,1)
 	to.aa <- substr(m,nchar(m),nchar(m))
 	pos <- as.integer(substr(m,2,nchar(m)-1))
-	lfc <- mean(hit.data[hit.single.idx[[m]],"lfc"])
+	lfc <- mean(all.data[single.idx[[m]],"lfc"])
 	hmap[to.aa,pos] <- lfc
 }
-for (m in insig.singles) {
-	to.aa <- substr(m,nchar(m),nchar(m))
-	pos <- as.integer(substr(m,2,nchar(m)-1))
-	hmap[to.aa,pos] <- NaN
-}
+# for (m in insig.singles) {
+# 	to.aa <- substr(m,nchar(m),nchar(m))
+# 	pos <- as.integer(substr(m,2,nchar(m)-1))
+# 	hmap[to.aa,pos] <- NaN
+# }
 
-pdf("comp_map2.pdf",width=16,height=5)
+pdf("comp_map_inferred.pdf",width=16,height=5)
 layout(cbind(c(3,1),c(4,2)),widths=c(9.5,.5),heights=c(2,9))
 op <- par(cex=.6,las=1,mar=c(5,4,0,0)+.1)
 plot(
@@ -584,44 +707,44 @@ col.fill <- apply(xy,1,function(.xy) {
 })
 rect(xy$x-1,20-xy$y,xy$x,21-xy$y,col=col.fill,border=NA)
 # cross out insignificant values
-for (m in insig.singles) {
-	to.aa <- substr(m,nchar(m),nchar(m))
-	x <- as.integer(substr(m,2,nchar(m)-1))
-	y <- 21-which(aas==to.aa)
-	segments(c(x-1,x-1),c(y-1,y),c(x,x),c(y,y-1),col="gray")
-}
+# for (m in insig.singles) {
+# 	to.aa <- substr(m,nchar(m),nchar(m))
+# 	x <- as.integer(substr(m,2,nchar(m)-1))
+# 	y <- 21-which(aas==to.aa)
+# 	segments(c(x-1,x-1),c(y-1,y),c(x,x),c(y,y-1),col="gray")
+# }
 segments(0,c(3,7,9,12),160,lty="dotted")
 #legend
 par(mar=c(5,0,0,4)+.1)
-plot(0,type="n",xlim=c(0,1),ylim=c(0,12),xlab="",ylab="",axes=FALSE)
+plot(0,type="n",xlim=c(0,1),ylim=c(0,11),xlab="",ylab="",axes=FALSE)
 rect(0,0:8,1,1:9,col=cp,border=NA)
 rect(0,9,1,10,col="lightgoldenrod1",border=NA)
 rect(0,10,1,11,col="gray80",border=NA)
-rect(0,11,1,12,col="white",border=NA)
-segments(c(0,0),c(11,12),c(1,1),c(12,11),col="gray")
-axis(4,at=0:11+.5,labels=c(seq(-4,4),"wt","n/d","insig."),tick=FALSE)
+# rect(0,11,1,12,col="white",border=NA)
+# segments(c(0,0),c(11,12),c(1,1),c(12,11),col="gray")
+axis(4,at=0:10+.5,labels=c(seq(-4,4),"wt","n/d"),tick=FALSE)
 mtext("log(fold-change)",side=4,line=2,las=3,cex=.6)
 
 par(mar=c(0,4,1,0)+.1)
-barvals <- apply(hmap,2,mean,na.rm=TRUE)
-# barvals <- apply(apply(hmap,2,function(x)c(
-# 	sum(x >= 0.5,na.rm=TRUE),
-# 	sum(x < 0.5 & x > -0.5,na.rm=TRUE)+sum(is.nan(x)),
-# 	sum(x <= -0.5,na.rm=TRUE)
-# )),2,function(x)x/sum(x))
+# barvals <- apply(hmap,2,mean,na.rm=TRUE)
+barvals <- apply(apply(hmap,2,function(x)c(
+	sum(x >= 0.5,na.rm=TRUE),
+	sum(x < 0.5 & x > -0.5,na.rm=TRUE)+sum(is.nan(x)),
+	sum(x <= -0.5,na.rm=TRUE)
+)),2,function(x)x/sum(x))
 plot(
 	0,type="n",
 	xlim=c(-0.5,ncol(hmap)),
-	ylim=c(-2.2,2.2),
-	# ylim=c(0,1),
+	# ylim=c(-2.2,2.2),
+	ylim=c(0,1),
 	axes=FALSE,xlab="",
-	ylab="mean log(fc)"
-	# ylab="pos/neutral/neg"
+	# ylab="mean log(fc)"
+	ylab="pos/neutral/neg"
 )
-rect(1:ncol(hmap)-1,0,1:ncol(hmap),barvals,col=cp[round(barvals+5)],border="gray")
-# rect(1:ncol(hmap)-1,0,1:ncol(hmap),barvals[3,],col=cp[[2]],border="gray")
-# rect(1:ncol(hmap)-1,barvals[3,],1:ncol(hmap),barvals[3,]+barvals[2,],col="white",border="gray")
-# rect(1:ncol(hmap)-1,barvals[3,]+barvals[2,],1:ncol(hmap),1,col=cp[[8]],border="gray")
+# rect(1:ncol(hmap)-1,0,1:ncol(hmap),barvals,col=cp[round(barvals+5)],border="gray")
+rect(1:ncol(hmap)-1,0,1:ncol(hmap),barvals[3,],col=cp[[2]],border="gray")
+rect(1:ncol(hmap)-1,barvals[3,],1:ncol(hmap),barvals[3,]+barvals[2,],col="white",border="gray")
+rect(1:ncol(hmap)-1,barvals[3,]+barvals[2,],1:ncol(hmap),1,col=cp[[8]],border="gray")
 grid(NA,NULL)
 axis(2)
 par(op)
