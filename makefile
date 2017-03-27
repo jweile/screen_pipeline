@@ -4,7 +4,7 @@ STABLE=v0.1
 PROJECT=screen_pipeline
 
 #default target: unit test and build
-all: build_stable
+all: build_latest
 
 # #run all unit tests
 # test: setup_test

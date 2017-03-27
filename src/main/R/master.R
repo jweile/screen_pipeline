@@ -183,54 +183,125 @@ sge$wait(verbose=TRUE)
 # ####
 # # PHASE 2: CONSOLIDATE JOB RESULTS
 # #
-logger$info("Consolidating results...")
 
-read.stream <- function(result.dir) {
+read.results <- function(result.dir) {
+	cfiles <- paste0(result.dir,list.files(path=result.dir,pattern="counts_.+\\.txt\\.gz"))
+
 	data <- list()
-	con <- pipe(paste("zcat ",result.dir,"*.txt.gz",sep=""),open="rb")
-	while(length(line <- readLines(con,1)) > 0) {
-		if (substr(line,1,1)=="#") {
-			sample.id <- substr(line,2,nchar(line))
-			if (!(sample.id %in% names(data))) {
-				data[[sample.id]] <- hash()
-			}
-		} else if (nchar(line) > 0) {
-			key.val <- strsplit(line,":")[[1]]
-			key <- key.val[[1]]
-			val <- key.val[[2]]
-			if (!has.key(key,data[[sample.id]])) {
-				data[[sample.id]][[key]] <- as.integer(val)
-			} else {
-				data[[sample.id]][[key]] <- data[[sample.id]][[key]] + as.integer(val)
+
+	pb <- txtProgressBar(max=length(cfiles),style=3)
+	for (i in 1:length(cfiles)) {
+		con <- pipe(paste("zcat ",cfiles[[i]],sep=""),open="rb")
+		while(length(line <- readLines(con,1)) > 0) {
+			if (substr(line,1,1)=="#") {
+				sample.id <- substr(line,2,nchar(line))
+				if (!(sample.id %in% names(data))) {
+					data[[sample.id]] <- hash()
+				}
+			} else if (nchar(line) > 0) {
+				key.val <- strsplit(line,":")[[1]]
+				key <- key.val[[1]]
+				val <- key.val[[2]]
+				if (!has.key(key,data[[sample.id]])) {
+					data[[sample.id]][[key]] <- as.integer(val)
+				} else {
+					data[[sample.id]][[key]] <- data[[sample.id]][[key]] + as.integer(val)
+				}
 			}
 		}
+		close(con)
+		setTxtProgressBar(pb,i)
 	}
-	close(con)
+	close(pb)
+
 	data
 }
 
-logger$info("Writing results to file...")
+# read.stream <- function(result.dir) {
+# 	data <- list()
+# 	con <- pipe(paste("zcat ",result.dir,"*.txt.gz",sep=""),open="rb")
+# 	while(length(line <- readLines(con,1)) > 0) {
+# 		if (substr(line,1,1)=="#") {
+# 			sample.id <- substr(line,2,nchar(line))
+# 			if (!(sample.id %in% names(data))) {
+# 				data[[sample.id]] <- hash()
+# 			}
+# 		} else if (nchar(line) > 0) {
+# 			key.val <- strsplit(line,":")[[1]]
+# 			key <- key.val[[1]]
+# 			val <- key.val[[2]]
+# 			if (!has.key(key,data[[sample.id]])) {
+# 				data[[sample.id]][[key]] <- as.integer(val)
+# 			} else {
+# 				data[[sample.id]][[key]] <- data[[sample.id]][[key]] + as.integer(val)
+# 			}
+# 		}
+# 	}
+# 	close(con)
+# 	data
+# }
+
+# logger$info("Writing results to file...")
+
+# invisible(lapply(result.dirs, function(result.dir) {
+
+# 	out <- read.stream(result.dir)
+
+# 	out.file <- paste(result.dir,"all_counts.txt.gz",sep="")
+# 	con <- gzfile(out.file,open="w")
+# 	invisible(lapply(1:length(out),function(i) {
+# 		sample.id <- names(out)[[i]]
+# 		writeLines(paste("#",sample.id,sep=""),con)
+# 		keys <- keys(out[[i]])
+# 		writeLines(paste(keys,values(out[[i]],keys),sep=":"),con)
+# 	}))
+# 	close(con)
+
+# 	#Clean up slave output
+# 	if (!debug.mode) {
+# 		file.remove(list.files(result.dir,pattern="counts_.+\\.txt\\.gz"))
+# 	}
+
+# }))
+
+
+sample.table <- read.delim(paste(muxtag.db,"_samples.tsv",sep=""),stringsAsFactors=FALSE)
 
 invisible(lapply(result.dirs, function(result.dir) {
 
-	out <- read.stream(result.dir)
+	logger$info("Consolidating results...")
+	data <- read.results(result.dir)
 
-	out.file <- paste(result.dir,"all_counts.txt.gz",sep="")
-	con <- gzfile(out.file,open="w")
-	invisible(lapply(1:length(out),function(i) {
-		sample.id <- names(out)[[i]]
-		writeLines(paste("#",sample.id,sep=""),con)
-		keys <- keys(out[[i]])
-		writeLines(paste(keys,values(out[[i]],keys),sep=":"),con)
+	data <- data[c(as.character(1:nrow(sample.table)),"invalid","undetermined")]
+
+	demux.stats <- do.call(rbind,lapply(data,function(counts) {
+		if (is.null(counts) || is.na(counts)) {
+			return(c(unknown.BC.counts=0,known.BC.counts=0))
+		}
+		na <- if(has.key("NA",counts)) counts[["NA"]] else 0
+		c(unknown.BC.counts=na,known.BC.counts=sum(values(counts))-na)
 	}))
-	close(con)
+	###FIX: The rows are not in the same order!!
+	demux.stats <- demux.stats[order(as.numeric(rownames(demux.stats))),]
+	demux.stats.table <- cbind(rbind(sample.table,NA,NA),demux.stats)
+	demux.stats.table[,1] <- rownames(demux.stats)
 
-	#Clean up slave output
-	if (!debug.mode) {
-		file.remove(list.files(result.dir,pattern="counts_.+\\.txt\\.gz"))
-	}
+	statfile <- sub("/$","_demux-stats.tsv",result.dir)
+	write.table(demux.stats.table,statfile,sep="\t",row.names=FALSE,quote=FALSE)
+
+	clones <- Reduce(union,lapply(data,keys))
+	data.mat <- do.call(cbind,lapply(data,function(counts) {
+		sapply(clones,function(clone) {
+			if (has.key(clone,counts)) counts[[clone]] else 0
+		})
+	}))
+	colnames(data.mat) <- names(data)
+	rownames(data.mat) <- clones
+
+	logger$info("Writing results to file...")
+	outfile <- sub("/$","_raw_counts.csv",result.dir)
+	write.table(data.mat,outfile,sep=",")
 
 }))
-
 
 logger$info("Done!")
